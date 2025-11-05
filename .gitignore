@@ -1,0 +1,46 @@
+# Node
+node_modules/
+npm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# TypeScript
+dist/
+build/
+lib/
+*.tsbuildinfo
+
+# Editor directories and files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Mac
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Env
+.env
+.env.*
+
+# Misc
+coverage/
+*.tgz
+
+# React Native
+android/
+ios/
+
+# AsyncStorage local cache (if any)
+# (leave commented to avoid accidentally ignoring project files)
+# async-storage-* 

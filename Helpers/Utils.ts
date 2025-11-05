@@ -1,17 +1,22 @@
-// Copied from ApplicationInsights-JS Offline Channel
-// https://github.com/microsoft/ApplicationInsights-JS/blob/4835556ce61ba902e4da0b85e76d7f175a39ffea/channels/offline-channel-js/src/Helpers/Utils.ts
+// Copied from https://github.com/microsoft/ApplicationInsights-JS/blob/4835556ce61ba902e4da0b85e76d7f175a39ffea/channels/offline-channel-js/src/Helpers/Utils.ts
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
 
+import { EventPersistence } from "@microsoft/applicationinsights-common";
 import {
-    isString,
-    objKeys,
-    strSubstr
-} from '@nevware21/ts-utils';
-import {
-    INotificationManager
-} from '@microsoft/applicationinsights-core-js';
-import {
-    EventPersistence
-} from '@microsoft/applicationinsights-common';
+    INotificationManager, ITelemetryItem, NotificationManager, eLoggingSeverity, generateW3CId
+} from "@microsoft/applicationinsights-core-js";
+import { isNumber, isString, objKeys, strSubstr } from "@nevware21/ts-utils";
+
+/**
+* Checks if the value is a valid EventPersistence.
+* @param {enum} value - The value that needs to be checked.
+* @returns {boolean} True if the value is in EventPersistence, false otherwise.
+*/
+export function isValidPersistenceLevel(value: EventPersistence | number): boolean {
+    return (isNumber(value) && value >= eLoggingSeverity.DISABLED && value <= EventPersistence.Critical);
+}
+
 
 // Endpoint schema
 // <prefix>.<suffix>
@@ -26,8 +31,7 @@ import {
  */
 export function getEndpointDomain(endpoint: string) {
     try {
-        let url = endpoint.replace(/^https?:\/\//, "");
-        url = url.replace(/^www\./, "");
+        let url = endpoint.replace(/^https?:\/\/|^www\./, "");
         url = url.replace(/\?/, "/");
         let arr = url.split("/");
         if (arr && arr.length > 0) {
@@ -67,14 +71,14 @@ export function base64Encode(data: string | Uint8Array) {
     let input = "";
 
     if (isString(data)) {
-        input = data as string;
+        input = data;
     } else {
-        input = (data as Uint8Array).toString();
+        input = data.toString();
     }
 
     let output = "";
     // tslint:disable-next-line:one-variable-per-declaration
-    let chr1: number, chr2: number, chr3: number;
+    let chr1, chr2, chr3;
 
     let lp = 0;
     while (lp < input.length) {
@@ -105,8 +109,8 @@ export function base64Encode(data: string | Uint8Array) {
  */
 export function base64Decode(input: string) {
     var output = "";
-    var chr1: number, chr2: number, chr3: number;
-    var enc1: number, enc2: number, enc3: number, enc4: number;
+    var chr1, chr2, chr3;
+    var enc1, enc2, enc3, enc4;
     var i = 0;
 
     input = input.replace(/[^A-Za-z0-9\+\/\=]/g, "");
@@ -145,7 +149,7 @@ export function base64Decode(input: string) {
 export function getTimeId(): string {
     let time = (new Date()).getTime();
     // append random digits to avoid same timestamp value
-    const random = strSubstr((Math.random() || 0).toString(), 0, 8);
+    const random = strSubstr(generateW3CId(), 0, 8);
     // function to create spanid();
     return time + "." + random;
 }
@@ -168,32 +172,6 @@ export function getTimeFromId(id: string) {
         // eslint-disable-next-line no-empty
     }
     return 0;
-}
-
-/**
- * Get persistence level from a telemetry item.
- * Persistence level will be get from root, baseData or data in order.
- * For example, if persistence level is set both in root and baseData, the root one will be returned.
- * If no valid persistence level defined, normal level will be returned.
- * @param item - telemetry item
- * @returns persistent level
- */
-export function getPersistence(item: any): number {
-    let rlt = EventPersistence.Normal
-    // if item is null, return normal level
-    if (!item) {
-        return rlt;
-    }
-    try {
-        let iItem = item as any;
-        let level = iItem.persistence || (iItem.baseData && iItem.baseData.persistence) || (iItem.data && iItem.data.persistence);
-        if (level && (typeof level === 'number')) {
-            return level as number;
-        }
-    } catch (e) {
-        // eslint-disable-next-line no-empty
-    }
-    return rlt;
 }
 
 export const EVT_DISCARD_STR = "eventsDiscarded";
@@ -229,7 +207,7 @@ export function forEachMap<T>(map: { [key: string]: T }, callback: (value: T, ke
 
 
 export function callNotification(mgr: INotificationManager, evtName: string, theArgs: any[]) {
-    let manager = (mgr || ({} as INotificationManager));
+    let manager = (mgr || ({} as NotificationManager));
     let notifyFunc = (manager as any)[evtName];
     if (notifyFunc) {
         try {
@@ -246,3 +224,50 @@ export function batchDropNotification(mgr: INotificationManager, cnt: number, re
     }
     return;
 }
+
+
+
+
+
+// OneCollector:
+// 200-OK – Success or partial success.
+// 204-NoContent – Success or partial success. Regarding accepting events, identical to 200-OK. If the request header contains NoResponseBody with the value of true and the request was successful/partially successful, 204-NoContent status code is returned instead of 200-OK.
+// 400-BadRequest – all events were rejected.
+// 403-Forbidden – client is above its quota and all events were throttled.
+// 413-RequestEntityTooLarge – the request doesn’t conform to limits described in Request constraints section.
+// 415-UnsupportedMediaType – the Content-Type or Content-Encoding header has an unexpected value.
+// 429-TooManyRequests – the server decided to throttle given request (no data accepted) as the client (device, client version, …) generates too much traffic.
+// 401-Unauthorized – Can occur under two conditions:
+//   All tenant tokens included in this request are invalid (unauthorized). kill-tokens header indicates which one(s). WWW-Authenticate: Token realm="ingestion" (see: rfc2617 for more details) header is added.
+// The client has supplied the “strict” header (see section 3.3), and at least one MSA and/or XAuth event token cannot be used as a source of trusted user or device information.  The event failure reason “TokenCrackingFailure” will be present in the response’ JSON body.  In this scenario, the client is expected to fix or replace the offending ticket and retry.
+// 500-InternalServerError – an unexpected exception while handling the request.
+// 503-ServiceUnavailable – a machine serving this request is overloaded or shutting down. The request should be retried to a different machine. The server adds Connection: Close header to enforce TCP connection closing.
+
+
+
+// Breeze
+// 0 ad blockers
+// 200 Success!
+// 206 - Partial Accept
+// 307/308 - Redirect
+// 400 - Invalid
+//  400 can also be caused by Azure AD authentication.
+//  400 is not retriable and SDK should drop invalid data.
+// 401 - Unauthorized
+//  401 can be also caused by an AAD outage.
+//  401 is retriable.
+// 402 - Daily Quota Exceeded, drop the data.
+//  There is no retry-after in the response header for 402.
+// 403 - Forbidden
+//  403 can also caused by misconfiguring the access control assigned to the Application Insights resource.
+//  403 is retriable.
+// 404 - Ingestion is allowed only from stamp specific endpoint
+//  Telemetry will be dropped and customer must update their connection string.
+//  404 is not retriable and SDK should drop the data.
+// 408 - Timeout, retry it later. (offline might get this)
+// 429 - Too Many Requests, Breeze returns retry-after for status code 429 only.
+// 500 - Internal Server Error, retry it later.
+// 502 - Bad Gateway, retry it later.
+// 503 - Service Unavailable, retry it later. (offline)
+// 504 - Gateway timeout, retry it later.
+// All other response codes, SDK should drop the data.
