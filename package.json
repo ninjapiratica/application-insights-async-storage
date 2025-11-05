@@ -1,0 +1,29 @@
+{
+  "name": "@np/application-insights-async-storage",
+  "version": "0.1.0",
+  "description": "Offline storage for application insights using AsyncStorage",
+  "keywords": [
+    "Application",
+    "Insights",
+    "AsyncStorage",
+    "React",
+    "Native"
+  ],
+  "homepage": "https://github.com/ninjapiratica/application-insights-async-storage#readme",
+  "bugs": {
+    "url": "https://github.com/ninjapiratica/application-insights-async-storage/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ninjapiratica/application-insights-async-storage.git"
+  },
+  "license": "ISC",
+  "author": "NinjaPiratica",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {},
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@microsoft/applicationinsights-offlinechannel-js": "0.3.10"
+  }
+}
