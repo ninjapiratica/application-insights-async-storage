@@ -7,21 +7,13 @@ import {
   IOfflineProvider,
   ILocalStorageProviderContext,
   IStorageTelemetryItem,
+  IOfflineChannelConfiguration,
 } from "@microsoft/applicationinsights-offlinechannel-js";
-import {
-  IProcessTelemetryContext,
-  getJSON,
-  onConfigChange,
-  IUnloadHookContainer,
-  eBatchDiscardedReason,
-  INotificationManager,
-  isNotNullOrUndefined
-} from '@microsoft/applicationinsights-core-js';
 import {
   getTimeId,
   getTimeFromId,
   getEndpointDomain,
-  batchDropNotification
+  forEachMap
 } from './Helpers/Utils';
 import {
   IStorageJSON
@@ -35,6 +27,10 @@ interface IJsonStoreDetails {
   db: IStorageJSON;
 }
 
+// @microsoft/applicationinsights-core-js
+export declare function isNotNullOrUndefined<T>(value: T): value is T;
+export const getJSON = () => JSON;
+
 // Constants (originally present in the protostub/merged source)
 const EventsToDropAtOneTime = 10;
 const Version = "1";
@@ -43,60 +39,9 @@ const DefaultMaxStorageSizeInBytes = 5000000;
 const MaxCriticalEvtsDropCnt = 2;
 const DefaultMaxInStorageTime = 604800000; //7*24*60*60*1000 7days
 
-
 function createAsyncRejectedPromise(e: any): any {
   return Promise.reject(e) as any;
 }
-
-function forEachMap<T>(map: { [key: string]: T }, callback: (value: T, key: string) => boolean, ordered?: boolean): void {
-  if (map) {
-    let keys = Object.keys(map || {});
-    if (!!ordered && keys) {
-      let time = (new Date()).getTime();
-      keys = keys.sort((a, b) => {
-        try {
-          let aTime = getTimeFromId(a) || time;
-          let bTime = getTimeFromId(b) || time;
-          return aTime - bTime;
-        } catch (e) {
-          // ignore
-        }
-        return -1;
-      });
-    }
-    for (let lp = 0; lp < keys.length; lp++) {
-      let key = keys[lp];
-      if (!callback(map[key], key)) {
-        break;
-      }
-    }
-  }
-}
-
-// Private helper methods that are not exposed as class methods
-function _isQuotaExceeded(storage: Storage | null, e: any) {
-  let result = false;
-  if (e instanceof DOMException) {
-    // test name field too, because code might not be present
-    if (e.code === 22 || e.name === "QuotaExceededError" ||            // everything except Firefox
-      e.code === 1014 || e.name === "NS_ERROR_DOM_QUOTA_REACHED") {   // Firefox
-      if (storage && storage.length !== 0) {
-        // acknowledge QuotaExceededError only if there's something already stored
-        result = true;
-      }
-    }
-  }
-
-  return result;
-}
-
-/**
-* Check and return that the storage type exists and has space to use
-*/
-function _getAvailableStorage(): AsyncStorageStatic {
-  return AsyncStorage;
-}
-
 
 // will drop batches with no critical evts first
 function _dropEventsUpToPersistence(
@@ -130,8 +75,7 @@ function _dropEventsUpToPersistence(
 function _dropMaxTimeEvents(
   maxStorageTime: number | null,
   events: { [id: string]: IStorageTelemetryItem },
-  eventsToDropAtOneTime: number | null,
-  mgr?: INotificationManager): boolean {
+  eventsToDropAtOneTime: number | null): boolean {
   let dropKeys: string[] = [];
   let droppedEvents = 0;
   let currentTime = (new Date()).getTime() + 1; // handle appended random float number
@@ -150,9 +94,6 @@ function _dropMaxTimeEvents(
       for (let lp = 0; lp < dropKeys.length; lp++) {
         delete events[dropKeys[lp]];
       }
-      if (mgr) {
-        batchDropNotification(mgr, droppedEvents, eBatchDiscardedReason.MaxInStorageTimeExceeded);
-      }
 
       return true;
     }
@@ -167,7 +108,7 @@ function _dropMaxTimeEvents(
 /**
  * Class that implements storing of events using the WebStorage Api ((window||globalThis||self).localstorage, (window||globalThis||self).sessionStorage).
  */
-export class WebStorageProvider implements IOfflineProvider {
+export class AsyncStorageProvider implements IOfflineProvider {
   public id: string | undefined;
 
   // internal fields converted from dynamicProto closure (use looser types)
@@ -180,12 +121,9 @@ export class WebStorageProvider implements IOfflineProvider {
   private _maxStorageTime: any = null;
   private _eventDropPerTime: any = null;
   private _maxCriticalCnt: any = null;
-  private _notificationManager: any = null;
-  private _unloadHookContainer?: IUnloadHookContainer;
 
-  constructor(id?: string, unloadHookContainer?: IUnloadHookContainer) {
+  constructor(id?: string) {
     this.id = id;
-    this._unloadHookContainer = unloadHookContainer;
 
     // expose debugging helper for parity with previous implementation
     (this as any)["_getDbgPlgTargets"] = () => {
@@ -204,21 +142,16 @@ export class WebStorageProvider implements IOfflineProvider {
     }
 
     // use any to avoid missing type imports
-    let storageConfig: any = (providerContext as any).storageConfig;
-    let itemCtx: any = (providerContext as any).itemCtx;
-    this._payloadHelper = new PayloadHelper(itemCtx.diagLog());
+    let storageConfig: IOfflineChannelConfiguration = providerContext.storageConfig;
+    this._payloadHelper = new PayloadHelper();
     this._endpoint = getEndpointDomain(endpointUrl || (providerContext as any).endpoint);
     let autoClean = !!storageConfig.autoClean;
-    this._notificationManager = (providerContext as any).notificationMgr || null;
 
-    let unloadHook = onConfigChange(storageConfig, () => {
-      this._maxStorageSizeInBytes = storageConfig.maxStorageSizeInBytes || DefaultMaxStorageSizeInBytes; // value checks and defaults should be applied during core config
-      this._maxStorageTime = storageConfig.inStorageMaxTime || DefaultMaxInStorageTime; // TODO: handle 0
-      let dropNum = storageConfig.EventsToDropPerTime;
-      this._eventDropPerTime = isNotNullOrUndefined(dropNum) ? dropNum : EventsToDropAtOneTime;
-      this._maxCriticalCnt = storageConfig.maxCriticalEvtsDropCnt || MaxCriticalEvtsDropCnt;
-    });
-    this._unloadHookContainer && this._unloadHookContainer.add(unloadHook);
+    this._maxStorageSizeInBytes = storageConfig.maxStorageSizeInBytes || DefaultMaxStorageSizeInBytes; // value checks and defaults should be applied during core config
+    this._maxStorageTime = storageConfig.inStorageMaxTime || DefaultMaxInStorageTime; // TODO: handle 0
+    let dropNum = storageConfig.EventsToDropPerTime;
+    this._eventDropPerTime = isNotNullOrUndefined(dropNum) ? dropNum : EventsToDropAtOneTime;
+    this._maxCriticalCnt = storageConfig.maxCriticalEvtsDropCnt || MaxCriticalEvtsDropCnt;
 
     // currently, won't handle endpoint change here
     // new endpoint will open a new db
@@ -239,7 +172,7 @@ export class WebStorageProvider implements IOfflineProvider {
     * Identifies whether this storage provider support synchronous requests
    */
   public supportsSyncRequests(): boolean {
-    return false;
+    return true;
   }
 
   /**
@@ -291,7 +224,7 @@ export class WebStorageProvider implements IOfflineProvider {
    * @param key - The key value to use for the value
    * @param value - The actual value of the request
    */
-  public async addEvent(key: string, evt: IStorageTelemetryItem, itemCtx: IProcessTelemetryContext): Promise<IStorageTelemetryItem> {
+  public async addEvent(key: string, evt: IStorageTelemetryItem, itemCtx: any /* @microsoft/applicationinsights-core-js - IProcessTelemetryContext */): Promise<IStorageTelemetryItem> {
     try {
       let theStore = await this._fetchStoredDb(this._storageKey || "");
       evt.id = evt.id || getTimeId();
@@ -308,10 +241,6 @@ export class WebStorageProvider implements IOfflineProvider {
         events[id] = evt;
         if (await this._updateStoredDb(theStore)) {
           // Database successfully updated
-          if (preDroppedCnt && this._notificationManager) {
-            // only send notification when batches are updated successfully in storage
-            batchDropNotification(this._notificationManager, preDroppedCnt, eBatchDiscardedReason.CleanStorage);
-          }
           return evt;
         }
 
@@ -407,7 +336,7 @@ export class WebStorageProvider implements IOfflineProvider {
     if (currentDb) {
       let events = currentDb.evts || {};
       try {
-        let isDropped = _dropMaxTimeEvents(this._maxStorageTime, events, this._eventDropPerTime, this._notificationManager);
+        let isDropped = _dropMaxTimeEvents(this._maxStorageTime, events, this._eventDropPerTime);
         if (isDropped) {
           return await this._updateStoredDb(storeDetails);
         }

@@ -1,27 +1,52 @@
 // Copied from https://github.com/microsoft/ApplicationInsights-JS/blob/4835556ce61ba902e4da0b85e76d7f175a39ffea/channels/offline-channel-js/src/Helpers/Utils.ts
+// The exported items from this file are not exported publicly from the offline-channel-js library, so they are copied here.
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-import { EventPersistence } from "@microsoft/applicationinsights-common";
-import {
-    INotificationManager, ITelemetryItem, NotificationManager, eLoggingSeverity, generateW3CId
-} from "@microsoft/applicationinsights-core-js";
-import { isNumber, isString, objKeys, strSubstr } from "@nevware21/ts-utils";
+// "@nevware21/ts-utils"
+export declare const isString: (value: any) =>
+    value is string;
+export const objKeys = (value: any): string[] =>
+    Object.keys(value);
+export const strSubstr = (value: string, start: number, length?: number): string =>
+    value.substring(start, length === undefined ? undefined : start + length);
 
-/**
-* Checks if the value is a valid EventPersistence.
-* @param {enum} value - The value that needs to be checked.
-* @returns {boolean} True if the value is in EventPersistence, false otherwise.
-*/
-export function isValidPersistenceLevel(value: EventPersistence | number): boolean {
-    return (isNumber(value) && value >= eLoggingSeverity.DISABLED && value <= EventPersistence.Critical);
+// "@microsoft/applicationinsights-core-js"
+export const random32 = (signed?: boolean) => {
+    const UInt32Mask = 0x100000000;
+    // Make sure the number is converted into the specified range (-0x80000000..0x7FFFFFFF)
+    let value = Math.floor((UInt32Mask * Math.random()) | 0);
+
+    if (!signed) {
+        // Make sure we end up with a positive number and not -ve one.
+        value >>>= 0;
+    }
+
+    return value;
 }
+export const generateW3CId = () => {
 
+    const hexValues = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"];
 
-// Endpoint schema
-// <prefix>.<suffix>
-//Prefix: Defines a service.
-//Suffix: Defines the common domain name.
+    // rfc4122 version 4 UUID without dashes and with lowercase letters
+    let oct = "", tmp;
+    for (let a = 0; a < 4; a++) {
+        tmp = random32();
+        oct +=
+            hexValues[tmp & 0xF] +
+            hexValues[tmp >> 4 & 0xF] +
+            hexValues[tmp >> 8 & 0xF] +
+            hexValues[tmp >> 12 & 0xF] +
+            hexValues[tmp >> 16 & 0xF] +
+            hexValues[tmp >> 20 & 0xF] +
+            hexValues[tmp >> 24 & 0xF] +
+            hexValues[tmp >> 28 & 0xF];
+    }
+
+    // "Set the two most significant bits (bits 6 and 7) of the clock_seq_hi_and_reserved to zero and one, respectively"
+    const clockSequenceHi = hexValues[8 + (random32() & 0x03) | 0];
+    return strSubstr(oct, 0, 8) + strSubstr(oct, 9, 4) + "4" + strSubstr(oct, 13, 3) + clockSequenceHi + strSubstr(oct, 16, 3) + strSubstr(oct, 19, 12);
+}
 
 /**
  * Get domian from an endpoint url.
@@ -44,16 +69,6 @@ export function getEndpointDomain(endpoint: string) {
     // if we can't get domain, entire endpoint will be used
     return endpoint;
 }
-
-/**
- * If current value is equal or greater than zero.
- * @param value - number
- * @returns boolean
- */
-export function isGreaterThanZero(value: number) {
-    return value >= 0;
-}
-
 
 //Base64 is a binary encoding rather than a text encoding,
 // it were added to the web platform before it supported binary data types.
@@ -206,68 +221,47 @@ export function forEachMap<T>(map: { [key: string]: T }, callback: (value: T, ke
 }
 
 
-export function callNotification(mgr: INotificationManager, evtName: string, theArgs: any[]) {
-    let manager = (mgr || ({} as NotificationManager));
-    let notifyFunc = (manager as any)[evtName];
-    if (notifyFunc) {
-        try {
-            notifyFunc.apply(manager, theArgs);
-        } catch (e) {
-            // eslint-disable-next-line no-empty
-        }
-    }
-}
 
-export function batchDropNotification(mgr: INotificationManager, cnt: number, reason?: number) {
-    if (mgr && cnt > 0) {
-        callNotification(mgr, BATCH_DROP_STR, [cnt, reason]);
-    }
-    return;
-}
+
+// // OneCollector:
+// // 200-OK – Success or partial success.
+// // 204-NoContent – Success or partial success. Regarding accepting events, identical to 200-OK. If the request header contains NoResponseBody with the value of true and the request was successful/partially successful, 204-NoContent status code is returned instead of 200-OK.
+// // 400-BadRequest – all events were rejected.
+// // 403-Forbidden – client is above its quota and all events were throttled.
+// // 413-RequestEntityTooLarge – the request doesn’t conform to limits described in Request constraints section.
+// // 415-UnsupportedMediaType – the Content-Type or Content-Encoding header has an unexpected value.
+// // 429-TooManyRequests – the server decided to throttle given request (no data accepted) as the client (device, client version, …) generates too much traffic.
+// // 401-Unauthorized – Can occur under two conditions:
+// //   All tenant tokens included in this request are invalid (unauthorized). kill-tokens header indicates which one(s). WWW-Authenticate: Token realm="ingestion" (see: rfc2617 for more details) header is added.
+// // The client has supplied the “strict” header (see section 3.3), and at least one MSA and/or XAuth event token cannot be used as a source of trusted user or device information.  The event failure reason “TokenCrackingFailure” will be present in the response’ JSON body.  In this scenario, the client is expected to fix or replace the offending ticket and retry.
+// // 500-InternalServerError – an unexpected exception while handling the request.
+// // 503-ServiceUnavailable – a machine serving this request is overloaded or shutting down. The request should be retried to a different machine. The server adds Connection: Close header to enforce TCP connection closing.
 
 
 
-
-
-// OneCollector:
-// 200-OK – Success or partial success.
-// 204-NoContent – Success or partial success. Regarding accepting events, identical to 200-OK. If the request header contains NoResponseBody with the value of true and the request was successful/partially successful, 204-NoContent status code is returned instead of 200-OK.
-// 400-BadRequest – all events were rejected.
-// 403-Forbidden – client is above its quota and all events were throttled.
-// 413-RequestEntityTooLarge – the request doesn’t conform to limits described in Request constraints section.
-// 415-UnsupportedMediaType – the Content-Type or Content-Encoding header has an unexpected value.
-// 429-TooManyRequests – the server decided to throttle given request (no data accepted) as the client (device, client version, …) generates too much traffic.
-// 401-Unauthorized – Can occur under two conditions:
-//   All tenant tokens included in this request are invalid (unauthorized). kill-tokens header indicates which one(s). WWW-Authenticate: Token realm="ingestion" (see: rfc2617 for more details) header is added.
-// The client has supplied the “strict” header (see section 3.3), and at least one MSA and/or XAuth event token cannot be used as a source of trusted user or device information.  The event failure reason “TokenCrackingFailure” will be present in the response’ JSON body.  In this scenario, the client is expected to fix or replace the offending ticket and retry.
-// 500-InternalServerError – an unexpected exception while handling the request.
-// 503-ServiceUnavailable – a machine serving this request is overloaded or shutting down. The request should be retried to a different machine. The server adds Connection: Close header to enforce TCP connection closing.
-
-
-
-// Breeze
-// 0 ad blockers
-// 200 Success!
-// 206 - Partial Accept
-// 307/308 - Redirect
-// 400 - Invalid
-//  400 can also be caused by Azure AD authentication.
-//  400 is not retriable and SDK should drop invalid data.
-// 401 - Unauthorized
-//  401 can be also caused by an AAD outage.
-//  401 is retriable.
-// 402 - Daily Quota Exceeded, drop the data.
-//  There is no retry-after in the response header for 402.
-// 403 - Forbidden
-//  403 can also caused by misconfiguring the access control assigned to the Application Insights resource.
-//  403 is retriable.
-// 404 - Ingestion is allowed only from stamp specific endpoint
-//  Telemetry will be dropped and customer must update their connection string.
-//  404 is not retriable and SDK should drop the data.
-// 408 - Timeout, retry it later. (offline might get this)
-// 429 - Too Many Requests, Breeze returns retry-after for status code 429 only.
-// 500 - Internal Server Error, retry it later.
-// 502 - Bad Gateway, retry it later.
-// 503 - Service Unavailable, retry it later. (offline)
-// 504 - Gateway timeout, retry it later.
-// All other response codes, SDK should drop the data.
+// // Breeze
+// // 0 ad blockers
+// // 200 Success!
+// // 206 - Partial Accept
+// // 307/308 - Redirect
+// // 400 - Invalid
+// //  400 can also be caused by Azure AD authentication.
+// //  400 is not retriable and SDK should drop invalid data.
+// // 401 - Unauthorized
+// //  401 can be also caused by an AAD outage.
+// //  401 is retriable.
+// // 402 - Daily Quota Exceeded, drop the data.
+// //  There is no retry-after in the response header for 402.
+// // 403 - Forbidden
+// //  403 can also caused by misconfiguring the access control assigned to the Application Insights resource.
+// //  403 is retriable.
+// // 404 - Ingestion is allowed only from stamp specific endpoint
+// //  Telemetry will be dropped and customer must update their connection string.
+// //  404 is not retriable and SDK should drop the data.
+// // 408 - Timeout, retry it later. (offline might get this)
+// // 429 - Too Many Requests, Breeze returns retry-after for status code 429 only.
+// // 500 - Internal Server Error, retry it later.
+// // 502 - Bad Gateway, retry it later.
+// // 503 - Service Unavailable, retry it later. (offline)
+// // 504 - Gateway timeout, retry it later.
+// // All other response codes, SDK should drop the data.
