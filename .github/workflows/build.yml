@@ -45,10 +45,7 @@ jobs:
         with:
           node-version: '18'
           registry-url: 'https://registry.npmjs.org'
-
-      - name: Install dependencies
-        run: npm install
-
+          
       - name: Download dist artifact
         uses: actions/download-artifact@v4
         with:
@@ -58,4 +55,4 @@ jobs:
       - name: Publish to npm
         run: |
           echo "Publishing package to npm..."
-          npm publish --provenance --access public
+          npm publish dist --provenance --access public
