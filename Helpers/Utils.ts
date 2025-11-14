@@ -4,10 +4,6 @@
 // Licensed under the MIT License.
 
 // "@nevware21/ts-utils"
-export declare const isString: (value: any) =>
-    value is string;
-export const objKeys = (value: any): string[] =>
-    Object.keys(value);
 export const strSubstr = (value: string, start: number, length?: number): string =>
     value.substring(start, length === undefined ? undefined : start + length);
 
@@ -24,6 +20,7 @@ export const random32 = (signed?: boolean) => {
 
     return value;
 }
+
 export const generateW3CId = () => {
 
     const hexValues = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"];
@@ -85,11 +82,7 @@ export function base64Encode(data: string | Uint8Array) {
     let line = "";
     let input = "";
 
-    if (isString(data)) {
-        input = data;
-    } else {
-        input = data.toString();
-    }
+    input = data.toString();
 
     let output = "";
     // tslint:disable-next-line:one-variable-per-declaration
@@ -178,7 +171,7 @@ export function getTimeId(): string {
 export function getTimeFromId(id: string) {
     try {
         let regex = new RegExp(/\d+\./g);
-        if (id && isString(id) && regex.test(id)) {
+        if (id && regex.test(id.toString())) {
             let arr = id.split(".");
             return parseInt(arr[0]);
 
@@ -189,14 +182,9 @@ export function getTimeFromId(id: string) {
     return 0;
 }
 
-export const EVT_DISCARD_STR = "eventsDiscarded";
-export const EVT_STORE_STR = "offlineEventsStored";
-export const EVT_SENT_STR = "offlineBatchSent";
-export const BATCH_DROP_STR = "offlineBatchDrop";
-
 export function forEachMap<T>(map: { [key: string]: T }, callback: (value: T, key: string) => boolean, ordered?: boolean): void {
     if (map) {
-        let keys = objKeys(map);
+        let keys = Object.keys(map);
         if (!!ordered && keys) {
             let time = (new Date()).getTime();
             keys = keys.sort((a, b) => {
@@ -219,49 +207,3 @@ export function forEachMap<T>(map: { [key: string]: T }, callback: (value: T, ke
         }
     }
 }
-
-
-
-
-// // OneCollector:
-// // 200-OK – Success or partial success.
-// // 204-NoContent – Success or partial success. Regarding accepting events, identical to 200-OK. If the request header contains NoResponseBody with the value of true and the request was successful/partially successful, 204-NoContent status code is returned instead of 200-OK.
-// // 400-BadRequest – all events were rejected.
-// // 403-Forbidden – client is above its quota and all events were throttled.
-// // 413-RequestEntityTooLarge – the request doesn’t conform to limits described in Request constraints section.
-// // 415-UnsupportedMediaType – the Content-Type or Content-Encoding header has an unexpected value.
-// // 429-TooManyRequests – the server decided to throttle given request (no data accepted) as the client (device, client version, …) generates too much traffic.
-// // 401-Unauthorized – Can occur under two conditions:
-// //   All tenant tokens included in this request are invalid (unauthorized). kill-tokens header indicates which one(s). WWW-Authenticate: Token realm="ingestion" (see: rfc2617 for more details) header is added.
-// // The client has supplied the “strict” header (see section 3.3), and at least one MSA and/or XAuth event token cannot be used as a source of trusted user or device information.  The event failure reason “TokenCrackingFailure” will be present in the response’ JSON body.  In this scenario, the client is expected to fix or replace the offending ticket and retry.
-// // 500-InternalServerError – an unexpected exception while handling the request.
-// // 503-ServiceUnavailable – a machine serving this request is overloaded or shutting down. The request should be retried to a different machine. The server adds Connection: Close header to enforce TCP connection closing.
-
-
-
-// // Breeze
-// // 0 ad blockers
-// // 200 Success!
-// // 206 - Partial Accept
-// // 307/308 - Redirect
-// // 400 - Invalid
-// //  400 can also be caused by Azure AD authentication.
-// //  400 is not retriable and SDK should drop invalid data.
-// // 401 - Unauthorized
-// //  401 can be also caused by an AAD outage.
-// //  401 is retriable.
-// // 402 - Daily Quota Exceeded, drop the data.
-// //  There is no retry-after in the response header for 402.
-// // 403 - Forbidden
-// //  403 can also caused by misconfiguring the access control assigned to the Application Insights resource.
-// //  403 is retriable.
-// // 404 - Ingestion is allowed only from stamp specific endpoint
-// //  Telemetry will be dropped and customer must update their connection string.
-// //  404 is not retriable and SDK should drop the data.
-// // 408 - Timeout, retry it later. (offline might get this)
-// // 429 - Too Many Requests, Breeze returns retry-after for status code 429 only.
-// // 500 - Internal Server Error, retry it later.
-// // 502 - Bad Gateway, retry it later.
-// // 503 - Service Unavailable, retry it later. (offline)
-// // 504 - Gateway timeout, retry it later.
-// // All other response codes, SDK should drop the data.

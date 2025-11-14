@@ -16,19 +16,20 @@ import {
   forEachMap
 } from './Helpers/Utils';
 import {
-  IStorageJSON
-} from './Interfaces/IOfflineProvider';
-import {
   PayloadHelper
 } from './PayloadHelper';
 
 interface IJsonStoreDetails {
   key: string;
-  db: IStorageJSON;
+  db: {
+    evts: { [id: string]: IStorageTelemetryItem }
+  };
 }
 
 // @microsoft/applicationinsights-core-js
-export declare function isNotNullOrUndefined<T>(value: T): value is T;
+function isNotNullOrUndefined(value: any) {
+  return !(value === null || value === undefined);
+}
 export const getJSON = () => JSON;
 
 // Constants (originally present in the protostub/merged source)
@@ -105,330 +106,261 @@ function _dropMaxTimeEvents(
   return droppedEvents > 0;
 }
 
-/**
- * Class that implements storing of events using the WebStorage Api ((window||globalThis||self).localstorage, (window||globalThis||self).sessionStorage).
- */
 export class AsyncStorageProvider implements IOfflineProvider {
-  public id: string | undefined;
+  public id: string;
 
-  // internal fields converted from dynamicProto closure (use looser types)
-  private _storage: AsyncStorageStatic = AsyncStorage;
-  private _storageKeyPrefix: any = DefaultStorageKey;
-  private _maxStorageSizeInBytes: any = DefaultMaxStorageSizeInBytes;
-  private _payloadHelper: any = null;
-  private _storageKey: any = null;
-  private _endpoint: any = null;
-  private _maxStorageTime: any = null;
-  private _eventDropPerTime: any = null;
-  private _maxCriticalCnt: any = null;
+  // internal state from original implementation
+  protected _storage = AsyncStorage;
+  private _storageKeyPrefix: string = DefaultStorageKey;
+  private _maxStorageSizeInBytes: number = DefaultMaxStorageSizeInBytes;
+  private _payloadHelper: PayloadHelper | null = null;
+  private _storageKey: string | null = null;
+  private _endpoint: string | null = null;
+  private _maxStorageTime: number | null = null;
+  private _eventDropPerTime: number | null = null;
+  private _maxCriticalCnt: number | null = null;
 
   constructor(id?: string) {
-    this.id = id;
-
-    // expose debugging helper for parity with previous implementation
-    (this as any)["_getDbgPlgTargets"] = () => {
-      return [this._storageKey, this._maxStorageSizeInBytes, this._maxStorageTime];
-    };
+    this.id = id || "";
   }
 
-  /**
-   * Initializes the provider using the config
-   * @param providerContext - The provider context that should be used to initialize the provider
-   * @returns True if the provider is initialized and available for use otherwise false
-   */
+  // debug helper copied from original closure
+  public _getDbgPlgTargets(): any[] {
+    return [this._storageKey, this._maxStorageSizeInBytes, this._maxStorageTime];
+  }
+
   public initialize(providerContext: ILocalStorageProviderContext, endpointUrl?: string): boolean {
     if (!this._storage) {
       return false;
     }
 
-    // use any to avoid missing type imports
     let storageConfig: IOfflineChannelConfiguration = providerContext.storageConfig;
     this._payloadHelper = new PayloadHelper();
-    this._endpoint = getEndpointDomain(endpointUrl || (providerContext as any).endpoint);
+    this._endpoint = getEndpointDomain(endpointUrl || providerContext.endpoint);
     let autoClean = !!storageConfig.autoClean;
 
-    this._maxStorageSizeInBytes = storageConfig.maxStorageSizeInBytes || DefaultMaxStorageSizeInBytes; // value checks and defaults should be applied during core config
-    this._maxStorageTime = storageConfig.inStorageMaxTime || DefaultMaxInStorageTime; // TODO: handle 0
+    this._maxStorageSizeInBytes = storageConfig.maxStorageSizeInBytes || DefaultMaxStorageSizeInBytes;
+    this._maxStorageTime = storageConfig.inStorageMaxTime || DefaultMaxInStorageTime;
     let dropNum = storageConfig.EventsToDropPerTime;
     this._eventDropPerTime = isNotNullOrUndefined(dropNum) ? dropNum : EventsToDropAtOneTime;
     this._maxCriticalCnt = storageConfig.maxCriticalEvtsDropCnt || MaxCriticalEvtsDropCnt;
 
-    // currently, won't handle endpoint change here
-    // new endpoint will open a new db
-    // endpoint change will be handled at offline batch level
-    // namePrefix should not contain any "_"
     this._storageKeyPrefix = storageConfig.storageKeyPrefix || DefaultStorageKey;
-    this._storageKey = this._storageKeyPrefix + "_" + Version + "_" + (this._endpoint || "");
+    this._storageKey = this._storageKeyPrefix + "_" + Version + "_" + this._endpoint;
 
     if (autoClean) {
-      // won't wait response here
       this.clean();
     }
 
     return true;
   }
 
-  /**
-    * Identifies whether this storage provider support synchronous requests
-   */
   public supportsSyncRequests(): boolean {
-    return true;
+    return false;
   }
 
-  /**
-   * Get all of the currently cached events from the storage mechanism
-   */
-  public async getAllEvents(cnt?: number): Promise<IStorageTelemetryItem[]> {
-    try {
-      return await this._getEvts(cnt);
-    } catch (e) {
-      return createAsyncRejectedPromise(e);
+  public getAllEvents(cnt?: number): IStorageTelemetryItem[] | Promise<IStorageTelemetryItem[]> | null {
+    if (!this._storage) {
+      return;
     }
+    return this._getEvts(cnt);
   }
 
-  /**
-   * Get Next cached event from the storage mechanism
-   */
-  public async getNextBatch(): Promise<IStorageTelemetryItem[]> {
-    try {
-      // set ordered to true, to make sure to get earliest events first
-      return await this._getEvts(1, true);
-    } catch (e) {
-      return createAsyncRejectedPromise(e);
+  public getNextBatch(): IStorageTelemetryItem[] | Promise<IStorageTelemetryItem[]> | null {
+    if (!this._storage) {
+      return;
     }
+    return this._getEvts(1, true);
   }
 
-  private async _getEvts(cnt?: number, ordered?: boolean): Promise<IStorageTelemetryItem[]> {
+  private _getEvts(cnt?: number, ordered?: boolean) {
     let allItems: IStorageTelemetryItem[] = [];
-    let theStore = (await this._fetchStoredDb(this._storageKey || "")).db;
-    if (theStore) {
-      let events = theStore.evts || {};
-      forEachMap(events, (evt, key) => {
-        if (evt) {
-          if ((evt as any).isArr) {
-            evt = (this._payloadHelper as any).base64ToArr(evt);
+
+    return this._fetchStoredDb(this._storageKey as string)
+      .then(theStore => {
+        let events = theStore.db.evts;
+
+        forEachMap(events, (evt) => {
+          if (evt) {
+            if (evt.isArr && this._payloadHelper) {
+              evt = this._payloadHelper.base64ToArr(evt);
+            }
+            allItems.push(evt);
           }
-          allItems.push(evt);
+          if (cnt && allItems && allItems.length == cnt) {
+            return false;
+          }
+          return true;
+        }, ordered);
+
+        return allItems;
+      });
+  }
+
+  public addEvent(key: string, evt: IStorageTelemetryItem, itemCtx: any /*IProcessTelemetryContext*/): IStorageTelemetryItem | Promise<IStorageTelemetryItem> | null {
+    return this._fetchStoredDb(this._storageKey as string)
+      .then(theStore => {
+        evt.id = evt.id || getTimeId();
+        evt.criticalCnt = evt.criticalCnt || 0;
+        let events = theStore.db.evts;
+        let id = evt.id;
+        if (evt && evt.isArr && this._payloadHelper) {
+          evt = this._payloadHelper.base64ToStr(evt);
         }
-        if (cnt && allItems && allItems.length == cnt) {
+        let preDroppedCnt = 0;
+
+        // eslint-disable-next-line no-constant-condition
+        while (true && evt) {
+          events[id] = evt;
+
+          return this._updateStoredDb(theStore)
+            .then(x => {
+              if (x) {
+                return evt;
+              }
+              else {
+                delete events[id];
+                let droppedCnt = _dropEventsUpToPersistence(this._maxCriticalCnt as number, events, this._eventDropPerTime as number);
+                preDroppedCnt += droppedCnt;
+                if (!droppedCnt) {
+                  return createAsyncRejectedPromise(new Error("Unable to free up event space"));
+                }
+              }
+            });
+        }
+      });
+  }
+
+  public removeEvents(evts: IStorageTelemetryItem[]): IStorageTelemetryItem[] | Promise<IStorageTelemetryItem[]> | null {
+    return this._fetchStoredDb(this._storageKey as string, false)
+      .then(theStore => {
+        let currentDb = theStore.db;
+        if (currentDb) {
+          let events = currentDb.evts;
+
+          for (let i = 0; i < evts.length; ++i) {
+            let evt = evts[i];
+            delete events[evt.id];
+          }
+
+          return this._updateStoredDb(theStore)
+            .then(x => {
+              if (x) {
+                return evts;
+              } else {
+                return this._clearDatabase(theStore.key);
+              }
+            })
+            .catch(_ => {
+              // Storage Corrupted
+              return this._clearDatabase(theStore.key);
+            });
+        }
+
+        return evts;
+      });
+  }
+
+  public clear(): IStorageTelemetryItem[] | Promise<IStorageTelemetryItem[]> | null {
+    let removedItems: IStorageTelemetryItem[] = [];
+    return this._fetchStoredDb(this._storageKey as string, false)
+      .then(theStore => {
+        let storedDb = theStore.db;
+        if (storedDb) {
+          let events = storedDb.evts;
+          forEachMap(events, (evt) => {
+            if (evt) {
+              delete events[evt.id];
+              removedItems.push(evt);
+            }
+            return true;
+          });
+
+          return this._updateStoredDb(theStore)
+            .then(_ => {
+              return removedItems;
+            });
+        }
+
+        return removedItems;
+      });
+  }
+
+  public clean(): boolean | Promise<boolean> {
+    return this._fetchStoredDb(this._storageKey as string, false)
+      .then(storeDetails => {
+        let currentDb = storeDetails.db;
+        if (currentDb) {
+          let events = currentDb.evts;
+          try {
+            let isDropped = _dropMaxTimeEvents(this._maxStorageTime, events, this._eventDropPerTime);
+            if (isDropped) {
+              return this._updateStoredDb(storeDetails);
+            }
+            return true;
+          } catch (e) {
+            // should not throw errors here
+          }
           return false;
         }
         return true;
-      }, ordered);
-    }
-    return allItems;
+      });
   }
 
-  /**
-   * Stores the value into the storage using the specified key.
-   * @param key - The key value to use for the value
-   * @param value - The actual value of the request
-   */
-  public async addEvent(key: string, evt: IStorageTelemetryItem, itemCtx: any /* @microsoft/applicationinsights-core-js - IProcessTelemetryContext */): Promise<IStorageTelemetryItem> {
-    try {
-      let theStore = await this._fetchStoredDb(this._storageKey || "");
-      evt.id = evt.id || getTimeId();
-      evt.criticalCnt = evt.criticalCnt || 0;
-      let events = (theStore.db && theStore.db.evts) || {};
-      let id = evt.id;
-      if (evt && (evt as any).isArr) {
-        evt = (this._payloadHelper as any).base64ToStr(evt);
-      }
-      let preDroppedCnt = 0;
-
-      // eslint-disable-next-line no-constant-condition
-      while (true && evt) {
-        events[id] = evt;
-        if (await this._updateStoredDb(theStore)) {
-          // Database successfully updated
-          return evt;
+  public teardown(): void {
+    this._fetchStoredDb(this._storageKey as string, false)
+      .then(theStore => {
+        let storedDb = theStore.db;
+        if (storedDb) {
+          return this._updateStoredDb(theStore, false);
         }
-
-        // Could not not add events to storage assuming its full, so drop events to make space
-        // or max size exceeded
-        delete events[id];
-        let droppedCnt = _dropEventsUpToPersistence(this._maxCriticalCnt || MaxCriticalEvtsDropCnt, events || {}, this._eventDropPerTime || EventsToDropAtOneTime);
-        preDroppedCnt += droppedCnt;
-        if (!droppedCnt) {
-          // Can't free any space for event
-          return createAsyncRejectedPromise(new Error("Unable to free up event space"));
-        }
-      }
-
-      // This shouldn't be reached but TS is complaining
-      return evt;
-    } catch (e) {
-      return createAsyncRejectedPromise(e);
-    }
+      })
+      .catch(e => {
+        // Add diagnostic logging
+      });
   }
 
-  /**
-   * Removes the value associated with the provided key
-   * @param evts - The events to be removed
-   */
-  public async removeEvents(evts: IStorageTelemetryItem[]): Promise<IStorageTelemetryItem[]> {
-    try {
-      let theStore = await this._fetchStoredDb(this._storageKey || "", false);
-      let currentDb = theStore.db;
-      if (currentDb) {
-        let events = currentDb.evts || {};
-        try {
-          for (let i = 0; i < evts.length; ++i) {
-            let evt = evts[i];
-            if (evt && (evt as any).id) {
-              delete events[(evt as any).id];
-            }
-          }
-
-          // Update takes care of removing the DB if it's completely empty now
-          if (await this._updateStoredDb(theStore)) {
-            return evts;
-          }
-        } catch (e) {
-          // Storage corrupted
-        }
-
-        // failure here so try and remove db to unblock following events
-        evts = await this._clearDatabase(theStore.key);
-      }
-
-      return evts;
-    } catch (e) {
-      return createAsyncRejectedPromise(e);
-    }
-  }
-
-  /**
-   * Removes all entries from the storage provider for the current endpoint and returns them as part of the response, if there are any.
-   */
-  public async clear(): Promise<IStorageTelemetryItem[]> {
-    try {
-      let removedItems: IStorageTelemetryItem[] = [];
-      let theStore = await this._fetchStoredDb(this._storageKey || "", false);
-      let storedDb = theStore.db;
-      if (storedDb) {
-        let events = storedDb.evts || {};
-        forEachMap(events, (evt) => {
-          if (evt) {
-            if (evt && (evt as any).id) {
-              delete events[(evt as any).id]
-            }
-            removedItems.push(evt);
-          }
-
-          return true;
-        });
-
-        await this._updateStoredDb(theStore);
-      }
-
-      return removedItems;
-    } catch (e) {
-      // Unable to clear the database
-      return createAsyncRejectedPromise(e);
-    }
-  }
-
-  // @ts-ignore - keep original interface but allow optional disable
-  public async clean(disable?: boolean): Promise<boolean> {
-    let storeDetails = await this._fetchStoredDb(this._storageKey || "", false);
-    let currentDb = storeDetails.db;
-    if (currentDb) {
-      let events = currentDb.evts || {};
+  private async _fetchStoredDb(dbKey: string | null, returnDefault = true): Promise<IJsonStoreDetails> {
+    let dbToStore: { evts: { [key: string]: IStorageTelemetryItem } } | null = null;
+    if (this._storage && dbKey) {
+      let previousDb: any = null;
       try {
-        let isDropped = _dropMaxTimeEvents(this._maxStorageTime, events, this._eventDropPerTime);
-        if (isDropped) {
-          return await this._updateStoredDb(storeDetails);
-        }
-        return true;
-      } catch (e) {
-        // should not throw errors here
-        // because we don't want to block following process
-      }
-      return false;
-    }
-  }
-
-  /**
-   * Shuts-down the telemetry plugin. This is usually called when telemetry is shut down.
-   * This attempts to update the lastAccessTime for any storedDb
-   */
-  public async teardown(): Promise<void> {
-    try {
-      let theStore = await this._fetchStoredDb(this._storageKey, false);
-      let storedDb = theStore.db;
-      if (storedDb) {
-        // reset the last access time
-        storedDb.lastAccessTime = 0;
-        await this._updateStoredDb(theStore, false);
-      }
-    } catch (e) {
-      // Add diagnostic logging
-    }
-  }
-
-  /**
-   * @ignore
-   * Creates a new json store with the StorageJSON (may be null), a null db value indicates that the store
-   * associated with the key is empty and should be removed.
-   * @param dbKey - The key to associate with the database
-   * @param db - The database
-   */
-  private _newStore(dbKey: string, db: IStorageJSON): IJsonStoreDetails {
-    return {
-      key: dbKey,
-      db: db
-    };
-  }
-
-  private async _fetchStoredDb(dbKey: string, returnDefault = true): Promise<IJsonStoreDetails> {
-    dbKey = dbKey || "";
-    let dbToStore: IStorageJSON | null = null;
-    if (this._storage) {
-      let previousDb = await this._storage.getItem(dbKey);
+        previousDb = this._storage.getItem && await this._storage.getItem(dbKey);
+      } catch { previousDb = null; }
 
       if (previousDb) {
         try {
-          dbToStore = (getJSON() as any).parse(previousDb as string);
+          dbToStore = getJSON().parse(previousDb);
         } catch (e) {
           // storage corrupted
-          await this._storage.removeItem(dbKey);
+          try { this._storage.removeItem && await this._storage.removeItem(dbKey); } catch { /* noop */ }
         }
       }
 
       if (returnDefault && !dbToStore) {
-        // Create and return a default empty database
         dbToStore = {
           evts: {},
-          lastAccessTime: 0
         };
       }
     }
 
-    return this._newStore(dbKey, dbToStore as any);
+    return {
+      key: dbKey,
+      db: dbToStore
+    } as IJsonStoreDetails;
   }
 
   private async _updateStoredDb(jsonStore: IJsonStoreDetails, updateLastAccessTime = true): Promise<boolean> {
-    //let removeDb = true;
     let dbToStore = jsonStore.db;
-    if (dbToStore) {
-      if (updateLastAccessTime) {
-        // Update the last access time
-        dbToStore.lastAccessTime = (new Date()).getTime();
-      }
-    }
 
     try {
-      let jsonString = (getJSON() as any).stringify(dbToStore || {});
-      if (jsonString.length > (this._maxStorageSizeInBytes || DefaultMaxStorageSizeInBytes)) {
-        // We can't store the database as it would exceed the configured max size
+      let jsonString = getJSON().stringify(dbToStore);
+      if (jsonString.length > this._maxStorageSizeInBytes) {
         return false;
       }
 
-      this._storage && await this._storage.setItem(jsonStore.key, jsonString);
+      this._storage && this._storage.setItem && await this._storage.setItem(jsonStore.key, jsonString);
     } catch (e) {
-      // catch exception due to trying to store or clear JSON
-      // We could not store the database
       return false;
     }
 
@@ -440,23 +372,66 @@ export class AsyncStorageProvider implements IOfflineProvider {
     let storeDetails = await this._fetchStoredDb(dbKey, false);
     let currentDb = storeDetails.db;
     if (currentDb) {
-      let events = currentDb.evts || {};
+      let events = currentDb.evts;
       try {
         forEachMap(events, (evt) => {
           if (evt) {
             removedItems.push(evt);
           }
-
           return true;
         });
       } catch (e) {
         // catch exception due to trying to store or clear JSON
       }
 
-      // Remove the entire stored database
-      this._storage && await this._storage.removeItem(storeDetails.key);
+      this._storage && this._storage.removeItem && await this._storage.removeItem(storeDetails.key);
     }
 
     return removedItems;
   }
+}
+
+export class AsyncStorageUnloadProvider extends AsyncStorageProvider {
+
+  constructor(id?: string) {
+    super(id);
+  }
+
+  initialize(providerContext: ILocalStorageProviderContext): boolean {
+    super.initialize(providerContext);
+    return true;
+  }
+
+  override supportsSyncRequests(): boolean {
+    return true;
+  }
+
+  override addEvent(key: string, evt: IStorageTelemetryItem, itemCtx: any /* IProcessTelemetryContext */): IStorageTelemetryItem | Promise<IStorageTelemetryItem> | null {
+    super.addEvent(key, evt, itemCtx);
+    return null;
+  }
+
+  override getNextBatch(): IStorageTelemetryItem[] | Promise<IStorageTelemetryItem[]> | null {
+    return [];
+  }
+
+  override getAllEvents(cnt?: number): IStorageTelemetryItem[] | Promise<IStorageTelemetryItem[]> | null {
+    return [];
+  }
+
+  override removeEvents(evts: IStorageTelemetryItem[]): IStorageTelemetryItem[] | Promise<IStorageTelemetryItem[]> | null {
+    return [];
+  }
+
+  override clear(): IStorageTelemetryItem[] | Promise<IStorageTelemetryItem[]> | null {
+    return [];
+  }
+
+  override clean(disable?: boolean): boolean | Promise<boolean> {
+    return true;
+  }
+
+  override teardown(): void {
+  }
+
 }

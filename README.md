@@ -30,37 +30,34 @@ yarn add @react-native-async-storage/async-storage@^2.0.0
 yarn add @microsoft/applicationinsights-offlinechannel-js@^0.3.10
 ```
 
-Notes:
-- Because this is a library, we declare these packages as peer dependencies so the host application controls the exact installed versions and avoids duplicate copies of shared frameworks.
-- If your project already provides either package, you don't need to re-install it.
-
 ## Usage
 
-Because the provider implements the same interface as the upstream WebStorageProvider, you can use it anywhere a WebStorageProvider is expected. Replace `new WebStorageProvider(...)` with `new AsyncStorageProvider(...)` when configuring the offline channel.
+Follow the usage setup by `@microsoft/applicationinsights-offlinechannel-js`. Set the customProvider to AsyncStorageProvider. If you are in an environment where localstorage is unavailable, set the customUnloadProvider as well.
 
-Example (conceptual):
-```javascript
+Example:
+```diff
 import { OfflineChannel } from '@microsoft/applicationinsights-offlinechannel-js';
 import AsyncStorageProvider from '@np/application-insights-async-storage';
 
 // create provider (constructor accepts the same options shape as WebStorageProvider)
-const storageProvider = new AsyncStorageProvider({ /* optional options, e.g. key */ });
+const storageProvider = new AsyncStorageProvider();
 
 // wire it into your offline channel / configuration in place of WebStorageProvider
 const offlineChannel = new OfflineChannel();
-// wherever your integration expects a storage provider, supply `storageProvider`.
-// (This library implements the same storage provider API as WebStorageProvider.)
-offlineChannel.storageProvider = storageProvider;
+const appInsights = new ApplicationInsights({
+  config: {
+    connectionString: '',
+    extensionsConfig: {
+      [offlineChannel.identifier]: {
+        minPersistenceLevel: 0,
++        customProvider: new AsyncStorageProvider(),
++        customUnloadProvider: new AsyncStorageUnloadProvider()
+      }
+    }
+  }
+})
+appInsights.loadAppInsights();
+appInsights.addPlugin(offlineChannel);
 ```
 
-If you previously configured Application Insights or the offline channel with WebStorageProvider, the swap is typically a one-line change.
-
 ## Notes and recommendations
-
-- Test against the versions you support. This package lists the following versions in package.json:
-  - peer: `@microsoft/applicationinsights-offlinechannel-js` (see package.json)
-  - peer: `@react-native-async-storage/async-storage` (install in the host app)
-- Document in your app’s README that AsyncStorage must be installed and linked (React Native autolinking usually covers this).
-- Because this package is a library, consumers control exact versions of AsyncStorage and Application Insights; ranges are used for peer dependencies.
-
-If you want a short example tailored to your app’s initialization code, attach the code you use to configure Application Insights and I can show the exact replacement.
