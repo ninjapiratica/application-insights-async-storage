@@ -6,6 +6,7 @@ on:
     tags: ['v*']
   pull_request:
     branches: [ main ]
+  workflow_dispatch: 
 
 jobs:
   build:
@@ -54,5 +55,4 @@ jobs:
 
       - name: Publish to npm
         run: |
-          echo "Publishing package to npm..."
-          npm publish --provenance --access public
+          npm publish
