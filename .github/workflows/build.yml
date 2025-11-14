@@ -55,4 +55,4 @@ jobs:
       - name: Publish to npm
         run: |
           echo "Publishing package to npm..."
-          npm publish dist --provenance --access public
+          npm publish --provenance --access public
